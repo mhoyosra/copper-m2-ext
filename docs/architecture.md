@@ -114,3 +114,28 @@ background so the panel can show progress.
 
 **Risks and open questions:** With tools off the model can invent prices (the
 panel labels this). Each question costs a model call, logged to `ai_calls`.
+
+## Module 2 extension: compare_products
+
+**Summary:** A fifth Ask Copper tool, added only in `copper-m2-ext`. It puts two
+products side by side (price, features, which is cheaper) and adds today's
+stock for each, so one question like "Copper Home vs Copper Notes: which is
+cheaper, and which can I get this week?" is answered from one tool call.
+
+| Piece | Where | What it does |
+|---|---|---|
+| Tool | `lib/copper/assistant/tools.ts` | `compare_products` takes exactly two different product ids |
+| Instructions | `lib/copper/assistant/instructions.ts` | One sentence telling Copper to use it for comparisons |
+| Tests | `tests/compare-products.test.ts` | Price gap, stock merge, restock date, stock-down and bad input |
+
+**Data flow:** the tool reads price and features from the catalog and calls
+`checkAvailability()` for each product, so stock is read fresh from Supabase
+and reports "unavailable" instead of guessing when it can't be read.
+
+**Decisions and trade-offs:** Nothing is typed into the tool; "available now"
+means at least one color is in stock or low stock. Adding a fifth tool breaks
+two protected Module 2 checks that expect exactly four tools (AC-M2.8 and
+AC-M2.14). That is expected here and does not affect `copper-m2`.
+
+**Risks and open questions:** Each comparison reads stock twice (once per
+product). Price is per product, not per color, so there is no "cheapest color".

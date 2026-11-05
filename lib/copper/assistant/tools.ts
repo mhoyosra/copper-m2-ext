@@ -1,4 +1,4 @@
-// Module 2: the four tools Ask Copper can use. Products and prices come from
+// Module 2: the four tools Ask Copper can use, plus compare_products (extension). Products and prices come from
 // lib/copper/catalog.ts and stock from lib/copper/inventory.ts, so the
 // chatbot never has to make them up.
 // The contract for each tool is in specs/module-2/spec.md.
@@ -52,6 +52,30 @@ export type Availability =
     }
   | { status: "not_a_color"; product: string; color: string; colors: string[] }
   | { status: "unavailable"; message: string };
+
+export type CompareProductsInput = { products: ProductId[] };
+
+export type ProductComparison = {
+  products: {
+    id: ProductId;
+    name: string;
+    type: string;
+    priceUsd: number;
+    features: string[];
+    stock:
+      | {
+          status: "ok";
+          colors: { color: string; stock: Stock; restockDate: string | null }[];
+          // True when at least one color is in stock or low stock today.
+          availableNow: boolean;
+          // When nothing is available now: the soonest restock date, else null.
+          earliestRestock: string | null;
+        }
+      | { status: "unavailable"; message: string };
+  }[];
+  // Which product costs less and by how much, or null when they cost the same.
+  cheaper: { id: ProductId; name: string; savesUsd: number } | null;
+};
 
 const productIds = ["copper-home", "copper-notes"] as const;
 
@@ -185,6 +209,71 @@ export async function checkAvailability(
   return { status: "ok", product: product.name, colors };
 }
 
+export const compareProductsInput: z.ZodType<CompareProductsInput> = z
+  .strictObject({ products: z.array(z.enum(productIds)).length(2) })
+  .refine((v) => v.products[0] !== v.products[1], {
+    message: "Pick two different products to compare.",
+  });
+
+/**
+ * compare_products: two products side by side. Price and features come from
+ * the catalog; stock comes from check_availability, so it is read fresh and
+ * says "unavailable" instead of guessing when stock can't be read.
+ */
+export async function compareProducts(
+  input: CompareProductsInput,
+): Promise<ProductComparison> {
+  const catalog = getProducts();
+  const compared = await Promise.all(
+    input.products.map(async (id) => {
+      const product = catalog.find((p) => p.id === id)!;
+      const availability = await checkAvailability({ product: id });
+
+      let stock: ProductComparison["products"][number]["stock"];
+      if (availability.status === "ok") {
+        const availableNow = availability.colors.some(
+          (c) => c.stock !== "backordered",
+        );
+        // Dates are YYYY-MM-DD, so sorting them as text sorts them by day.
+        const dates = availability.colors
+          .flatMap((c) => (c.restockDate ? [c.restockDate] : []))
+          .sort();
+        stock = {
+          status: "ok",
+          colors: availability.colors,
+          availableNow,
+          earliestRestock: availableNow ? null : (dates[0] ?? null),
+        };
+      } else if (availability.status === "unavailable") {
+        stock = { status: "unavailable", message: availability.message };
+      } else {
+        stock = {
+          status: "unavailable",
+          message: "Stock can't be checked right now.",
+        };
+      }
+
+      return {
+        id,
+        name: product.name,
+        type: product.type,
+        priceUsd: product.priceUsd,
+        features: product.features.map((f) => f.name),
+        stock,
+      };
+    }),
+  );
+
+  const [a, b] = compared;
+  const gap = round2(Math.abs(a.priceUsd - b.priceUsd));
+  const cheap = a.priceUsd <= b.priceUsd ? a : b;
+  return {
+    products: compared,
+    cheaper:
+      gap === 0 ? null : { id: cheap.id, name: cheap.name, savesUsd: gap },
+  };
+}
+
 export const copperTools = {
   get_products: tool({
     description:
@@ -208,5 +297,11 @@ export const copperTools = {
       "Check today's stock for a product, or for one color of it, including restock dates.",
     inputSchema: checkAvailabilityInput,
     execute: async (input) => checkAvailability(input),
+  }),
+  compare_products: tool({
+    description:
+      "Compare two different Copper products side by side: price, features, which is cheaper, and which colors are in stock today (with restock dates when sold out).",
+    inputSchema: compareProductsInput,
+    execute: async (input) => compareProducts(input),
   }),
 };

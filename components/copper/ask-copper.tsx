@@ -505,6 +505,21 @@ function SentInput({ step }: { step: ToolStep }) {
     );
   }
   const products = PRODUCT_NAMES();
+  if (step.name === "compare_products") {
+    const ids = Array.isArray(input.products) ? input.products : [];
+    return (
+      <Fields
+        rows={[
+          [
+            "Products",
+            ids.length
+              ? ids.map((id) => products[String(id)] ?? String(id)).join(" vs ")
+              : "None",
+          ],
+        ]}
+      />
+    );
+  }
   if (step.name === "calculate_cost") {
     const ids = Array.isArray(input.products) ? input.products : [];
     return (
@@ -558,6 +573,38 @@ const restockLabel = (date: string | null) =>
         timeZone: "UTC",
       })
     : "";
+
+type ColorStock = {
+  color: string;
+  stock: string;
+  restockDate: string | null;
+};
+
+/** One color's stock as a colored pill, like check_availability shows it. */
+function StockPill({ c }: { c: ColorStock }) {
+  if (c.stock === "in_stock") {
+    return <Pill className="bg-accent text-accent-foreground">In stock</Pill>;
+  }
+  if (c.stock === "low_stock") {
+    return <Pill className="bg-chart-4 text-chart-5">Low stock</Pill>;
+  }
+  return (
+    <Pill className="bg-chart-3 text-chart-5">
+      Back-ordered until {restockLabel(c.restockDate)}
+    </Pill>
+  );
+}
+
+type ComparedProduct = {
+  id: string;
+  name: string;
+  type: string;
+  priceUsd: number;
+  features: string[];
+  stock:
+    | { status: "ok"; colors: ColorStock[] }
+    | { status: "unavailable"; message: string };
+};
 
 function CameBack({ step }: { step: ToolStep }) {
   if (step.state === "calling") {
@@ -653,6 +700,43 @@ function CameBack({ step }: { step: ToolStep }) {
               </p>
             ),
           )}
+      </div>
+    );
+  }
+
+  if (step.name === "compare_products" && Array.isArray(out.products)) {
+    const cheaper = isRecord(out.cheaper) ? out.cheaper : null;
+    return (
+      <div className="space-y-3">
+        {out.products.map((p: ComparedProduct) => (
+          <div key={p.id} className="space-y-1">
+            <p className="flex justify-between font-medium">
+              <span>{p.name}</span>
+              <span>{formatUsd(p.priceUsd)}</span>
+            </p>
+            <p className="text-muted-foreground text-xs">
+              {p.type} · {p.features.join(", ")}
+            </p>
+            {p.stock.status === "ok" ? (
+              p.stock.colors.map((c) => (
+                <p
+                  key={c.color}
+                  className="flex items-center justify-between gap-2"
+                >
+                  <span>{c.color}</span>
+                  <StockPill c={c} />
+                </p>
+              ))
+            ) : (
+              <p>{p.stock.message}</p>
+            )}
+          </div>
+        ))}
+        <p className="text-primary border-t pt-1 font-bold">
+          {cheaper
+            ? `${String(cheaper.name)} is ${formatUsd(Number(cheaper.savesUsd))} cheaper`
+            : "Both cost the same"}
+        </p>
       </div>
     );
   }
